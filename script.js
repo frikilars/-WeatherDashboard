@@ -12,8 +12,11 @@ let autoRefreshInterval = null;
 const popularCities = [
   "Jakarta", "Bandung", "Surabaya", "Medan", "Semarang",
   "Makassar", "Palembang", "Tangerang", "Depok", "Bekasi",
+  "Yogyakarta", "Malang", "Bogor", "Denpasar", "Batam",
+  "Bandar Lampung", "Lampung",
   "London", "Tokyo", "Dubai", "New York", "Singapore",
-  "Paris", "Seoul", "Bangkok",
+  "Paris", "Seoul", "Bangkok", "Berlin", "Sydney",
+  "Los Angeles", "Chicago", "Toronto", "Mumbai", "Shanghai"
 ];
 
 /* ============================================
@@ -41,16 +44,29 @@ function startAutoRefresh() {
    AUTOCOMPLETE
 ============================================ */
 function handleSearch(e) {
-  const val = e.target.value.toLowerCase();
+  const val = e.target.value.toLowerCase().trim();
   const res = document.getElementById("autocompleteResults");
 
-  if (val.length < 2) return res.classList.add("hidden");
+  if (val.length < 2) {
+    res.classList.add("hidden");
+    return;
+  }
 
-  const matches = popularCities.filter((c) =>
-    c.toLowerCase().includes(val)
-  );
+  // Filter hanya yang BENAR-BENAR cocok (bukan substring acak)
+  const matches = popularCities.filter((c) => {
+    const cityLower = c.toLowerCase();
+    // Harus dimulai dengan input ATAU ada kata yang dimulai dengan input
+    const words = cityLower.split(' ');
+    return words.some(word => word.startsWith(val)) || cityLower.startsWith(val);
+  });
+
+  if (matches.length === 0) {
+    res.classList.add("hidden");
+    return;
+  }
 
   res.innerHTML = matches
+    .slice(0, 8) // Batasi maksimal 8 hasil
     .map(
       (c) =>
         `<div onclick="selectCity('${c}')" class="px-4 md:px-6 py-3 md:py-4 hover:bg-purple-600/30 cursor-pointer transition-all font-semibold border-b border-purple-500/20 last:border-b-0 text-sm md:text-base">${c}</div>`
@@ -73,7 +89,7 @@ function selectCity(city) {
 }
 
 /* ============================================
-   LOAD CITY WEATHER (OPEN-METEO)
+   LOAD CITY WEATHER (VIA PHP BACKEND)
 ============================================ */
 async function searchWeather() {
   const city = document.getElementById("cityInput").value.trim();
@@ -91,19 +107,122 @@ async function fetchWeather(city) {
   hideError();
 
   try {
+    // HARDCODED FIX untuk kota-kota bermasalah
+    const cityFixes = {
+      'jakarta': { lat: -6.2088, lon: 106.8456, name: 'Jakarta', country: 'Indonesia' },
+      'bandung': { lat: -6.9175, lon: 107.6191, name: 'Bandung', country: 'Indonesia' },
+      'surabaya': { lat: -7.2575, lon: 112.7521, name: 'Surabaya', country: 'Indonesia' }
+    };
+    
+    const cityLower = city.toLowerCase().trim();
+    
+    // Cek apakah ada di hardcoded list
+    if (cityFixes[cityLower]) {
+      const fix = cityFixes[cityLower];
+      
+      const tempUnit = currentUnit === "C" ? "celsius" : "fahrenheit";
+      const weatherRes = await fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${fix.lat}&longitude=${fix.lon}&current_weather=true&temperature_unit=${tempUnit}&hourly=visibility,pressure_msl,cloudcover,relativehumidity_2m&daily=temperature_2m_max,temperature_2m_min,weathercode&forecast_days=5&timezone=auto`
+      );
+
+      const data = await weatherRes.json();
+
+      currentCity = fix.name;
+      document.getElementById("cityInput").value = fix.name;
+
+      updateCurrentWeather(data, fix.name, fix.country);
+      updateForecast(data);
+
+      showLoading(false);
+      hideError();
+      showDashboard(true);
+      return;
+    }
+    
+    // Gunakan API geocoding untuk kota lainnya
     const geo = await fetch(
-      `https://geocoding-api.open-meteo.com/v1/search?name=${city}&count=1&language=en`
+      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=10&language=en`
     );
     const geoData = await geo.json();
 
     if (!geoData.results || geoData.results.length === 0) {
       showLoading(false);
-      showError(`City "${city}" not found`);
+      showError(`City "${city}" not found. Please check the spelling and try again.`);
       showDashboard(false);
       return;
     }
 
-    const result = geoData.results[0];
+    // FILTER SUPER KETAT
+    const preferredCodes = ['PPLC', 'PPLA', 'PPLA2', 'PPLA3', 'PPLA4'];
+    let result = null;
+    
+    // Prioritas 1: Exact match dengan feature code kota UTAMA (PPLC/PPLA saja)
+    // DAN ambil yang NAMA PALING PENDEK (Jakarta vs Sunda Kelapa)
+    const exactMatchesMain = geoData.results.filter(r => 
+      r.name.toLowerCase() === cityLower && 
+      (r.feature_code === 'PPLC' || r.feature_code === 'PPLA')
+    );
+    
+    if (exactMatchesMain.length > 0) {
+      // Pilih yang namanya paling pendek (Jakarta lebih pendek dari Sunda Kelapa)
+      result = exactMatchesMain.reduce((shortest, current) => 
+        current.name.length < shortest.name.length ? current : shortest
+      );
+    }
+    
+    // Prioritas 2: Exact match dengan semua feature code
+    if (!result) {
+      const exactMatches = geoData.results.filter(r => 
+        r.name.toLowerCase() === cityLower && 
+        preferredCodes.includes(r.feature_code)
+      );
+      
+      if (exactMatches.length > 0) {
+        // Pilih yang namanya paling pendek
+        result = exactMatches.reduce((shortest, current) => 
+          current.name.length < shortest.name.length ? current : shortest
+        );
+      }
+    }
+    
+    // Prioritas 3: Exact match tanpa filter (untuk kota kecil)
+    // TAPI CEK LAGI: nama harus BENAR-BENAR SAMA!
+    if (!result) {
+      result = geoData.results.find(r => 
+        r.name.toLowerCase() === cityLower
+      );
+    }
+    
+    // VALIDASI TAMBAHAN: Pastikan nama yang ditemukan PERSIS SAMA dengan input
+    if (result && result.name.toLowerCase() !== cityLower) {
+      result = null; // Reset jika tidak sama persis
+    }
+    
+    // VALIDASI FINAL: Jika tidak ada hasil exact match, TOLAK!
+    if (!result) {
+      showLoading(false);
+      // Tampilkan saran kota yang valid saja (yang exact match atau sangat mirip)
+      const validSuggestions = geoData.results
+        .filter(r => {
+          const nameLower = r.name.toLowerCase();
+          // Hanya tampilkan saran jika mirip dengan input (untuk typo kecil)
+          return preferredCodes.includes(r.feature_code) && 
+                 (nameLower.startsWith(cityLower.substring(0, 4)) || 
+                  cityLower.startsWith(nameLower.substring(0, 4)));
+        })
+        .slice(0, 3)
+        .map(r => r.name)
+        .join(', ');
+      
+      if (validSuggestions) {
+        showError(`City "${city}" not found. Did you mean: ${validSuggestions}?`);
+      } else {
+        showError(`City "${city}" not found. Please enter a valid city name.`);
+      }
+      showDashboard(false);
+      return;
+    }
+
     const { latitude, longitude, country } = result;
 
     currentCity = result.name;

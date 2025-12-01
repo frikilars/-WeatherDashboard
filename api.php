@@ -1,140 +1,100 @@
 <?php
-/**
- * Weather Dashboard API Handler
- * File PHP ini OPSIONAL karena aplikasi sudah menggunakan API eksternal langsung dari JavaScript
- * File ini bisa digunakan jika Anda ingin membuat proxy API atau menyimpan data ke database
- */
-
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: GET, POST');
+header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type');
 
-// Fungsi untuk mengambil data cuaca dari Open-Meteo API
-function getWeatherData($city, $unit = 'celsius') {
-    try {
-        // Step 1: Geocoding - mendapatkan koordinat dari nama kota
-        $geocodeUrl = "https://geocoding-api.open-meteo.com/v1/search?name=" . urlencode($city) . "&count=1&language=en";
-        $geocodeResponse = file_get_contents($geocodeUrl);
-        $geocodeData = json_decode($geocodeResponse, true);
-        
-        if (!isset($geocodeData['results']) || empty($geocodeData['results'])) {
-            return [
-                'success' => false,
-                'error' => 'City not found'
-            ];
+// Ambil parameter dari request
+$city = isset($_GET['city']) ? trim($_GET['city']) : '';
+$lat  = isset($_GET['lat'])  ? trim($_GET['lat'])  : '';
+$lon  = isset($_GET['lon'])  ? trim($_GET['lon'])  : '';
+
+// Jika request menggunakan lat & lon → langsung panggil weather API
+if (!empty($lat) && !empty($lon)) {
+    echo json_encode(getWeatherData($lat, $lon));
+    exit;
+}
+
+// Jika city tidak diisi
+if (empty($city)) {
+    echo json_encode(['error' => 'City not provided']);
+    exit;
+}
+
+$cityLower = strtolower($city);
+
+// ==== PANGGIL API GEOCODING ====
+$geocodeUrl = "https://geocoding-api.open-meteo.com/v1/search?name=" . urlencode($city) . "&count=10&language=id&format=json";
+$geocodeJson = file_get_contents($geocodeUrl);
+$geocodeData = json_decode($geocodeJson, true);
+
+// Jika tidak ada hasil
+if (!isset($geocodeData['results']) || count($geocodeData['results']) === 0) {
+    echo json_encode(['error' => 'City not found']);
+    exit;
+}
+
+// ==== FILTER AGAR "JAKARTA" TIDAK MENJADI SUNDA KELAPA ====
+// feature_code untuk kota:
+// PPLC = ibu kota negara
+// PPLA = ibu kota provinsi / daerah administratif
+// PPLA2/3/4 = kota besar & kecamatan
+
+$preferredCodes = ['PPLC', 'PPLA', 'PPLA2', 'PPLA3', 'PPLA4'];
+
+$chosen = null;
+
+// Utamakan hasil dengan nama sama persis dan tipe kota
+foreach ($geocodeData['results'] as $r) {
+    if (strtolower($r['name']) === $cityLower) {
+        if (isset($r['feature_code']) && in_array($r['feature_code'], $preferredCodes)) {
+            $chosen = $r;
+            break;
         }
-        
-        $location = $geocodeData['results'][0];
-        $latitude = $location['latitude'];
-        $longitude = $location['longitude'];
-        $country = $location['country'] ?? '';
-        
-        // Step 2: Weather API - mendapatkan data cuaca
-        $weatherUrl = "https://api.open-meteo.com/v1/forecast?" . http_build_query([
-            'latitude' => $latitude,
-            'longitude' => $longitude,
-            'current_weather' => 'true',
-            'temperature_unit' => $unit,
-            'hourly' => 'visibility,pressure_msl,cloudcover,relativehumidity_2m',
-            'daily' => 'temperature_2m_max,temperature_2m_min,weathercode',
-            'forecast_days' => 5,
-            'timezone' => 'auto'
-        ]);
-        
-        $weatherResponse = file_get_contents($weatherUrl);
-        $weatherData = json_decode($weatherResponse, true);
-        
-        return [
-            'success' => true,
-            'city' => $location['name'],
-            'country' => $country,
-            'latitude' => $latitude,
-            'longitude' => $longitude,
-            'weather' => $weatherData
-        ];
-        
-    } catch (Exception $e) {
-        return [
-            'success' => false,
-            'error' => $e->getMessage()
-        ];
     }
 }
 
-// Fungsi untuk menyimpan favorite cities ke database (contoh)
-function saveFavoriteCity($userId, $cityName) {
-    // Implementasi database di sini
-    // Contoh: INSERT INTO favorites (user_id, city_name) VALUES (?, ?)
-    return [
-        'success' => true,
-        'message' => 'City added to favorites'
-    ];
-}
-
-// Fungsi untuk mengambil favorite cities dari database
-function getFavoriteCities($userId) {
-    // Implementasi database di sini
-    // Contoh: SELECT city_name FROM favorites WHERE user_id = ?
-    return [
-        'success' => true,
-        'cities' => ['Jakarta', 'Tokyo', 'London']
-    ];
-}
-
-// Handle API requests
-if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    
-    // Endpoint: /api.php?action=weather&city=Jakarta&unit=celsius
-    if (isset($_GET['action']) && $_GET['action'] === 'weather') {
-        $city = $_GET['city'] ?? 'Jakarta';
-        $unit = $_GET['unit'] ?? 'celsius';
-        
-        $result = getWeatherData($city, $unit);
-        echo json_encode($result);
-        exit;
-    }
-    
-    // Endpoint: /api.php?action=favorites&user_id=123
-    if (isset($_GET['action']) && $_GET['action'] === 'favorites') {
-        $userId = $_GET['user_id'] ?? 1;
-        
-        $result = getFavoriteCities($userId);
-        echo json_encode($result);
-        exit;
-    }
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $input = json_decode(file_get_contents('php://input'), true);
-    
-    // Endpoint: POST /api.php dengan body: {"action": "add_favorite", "user_id": 123, "city": "Jakarta"}
-    if (isset($input['action']) && $input['action'] === 'add_favorite') {
-        $userId = $input['user_id'] ?? 1;
-        $city = $input['city'] ?? '';
-        
-        if (empty($city)) {
-            echo json_encode([
-                'success' => false,
-                'error' => 'City name is required'
-            ]);
-            exit;
+// Jika tidak ketemu match sempurna → cari kota terdekat
+if (!$chosen) {
+    foreach ($geocodeData['results'] as $r) {
+        if (isset($r['feature_code']) && in_array($r['feature_code'], $preferredCodes)) {
+            $chosen = $r;
+            break;
         }
-        
-        $result = saveFavoriteCity($userId, $city);
-        echo json_encode($result);
-        exit;
     }
 }
 
-// Default response
-echo json_encode([
-    'success' => false,
-    'error' => 'Invalid request',
-    'endpoints' => [
-        'GET /api.php?action=weather&city=Jakarta&unit=celsius',
-        'GET /api.php?action=favorites&user_id=123',
-        'POST /api.php with body: {"action": "add_favorite", "user_id": 123, "city": "Jakarta"}'
-    ]
-]);
+// Kalau masih tidak ada (sangat jarang) → fallback index pertama
+if (!$chosen) {
+    $chosen = $geocodeData['results'][0];
+}
+
+// ==== Ambil latitude & longitude final ====
+$lat = $chosen['latitude'];
+$lon = $chosen['longitude'];
+
+// Ambil data cuaca
+$weather = getWeatherData($lat, $lon);
+
+// Tambahkan info lokasi yang benar
+$weather['location_name'] = $chosen['name'];
+$weather['country'] = $chosen['country'];
+
+echo json_encode($weather);
+
+
+// ===========================
+// FUNCTION AMBIL CUACA
+// ===========================
+function getWeatherData($lat, $lon) {
+    $url = "https://api.open-meteo.com/v1/forecast?"
+        . "latitude={$lat}&longitude={$lon}"
+        . "&current=temperature_2m,wind_speed_10m,relative_humidity_2m"
+        . "&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m"
+        . "&daily=temperature_2m_max,temperature_2m_min"
+        . "&timezone=auto";
+
+    $json = file_get_contents($url);
+    return json_decode($json, true);
+}
 ?>
