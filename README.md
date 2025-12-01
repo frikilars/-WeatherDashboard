@@ -1,9 +1,9 @@
-Weather Dash
+🌦️ Weather Dash
 
-Deskripsi Proyek
+📘 Deskripsi Proyek
 Weather Dash adalah aplikasi web interaktif yang menampilkan informasi cuaca secara real-time dengan memanfaatkan AJAX dan layanan Web Service API. Aplikasi ini menggunakan OpenWeatherMap API sebagai sumber utama data meteorologi dan mendukung pencarian kota secara dinamis. Sistem juga dilengkapi validasi otomatis, sehingga apabila nama kota tidak ditemukan, aplikasi akan menampilkan pesan “City not found” untuk memberi tahu pengguna.
 
-Fitur utama aplikasi meliputi:
+✨ Fitur Utama aplikasi meliputi:
 
 - Menampilkan cuaca saat ini secara real-time
 
@@ -18,7 +18,7 @@ Fitur utama aplikasi meliputi:
 - Penanganan error untuk nama kota yang tidak valid atau API tidak tersedia
   
 
-2. Arsitektur Teknologi
+🏗️ Arsitektur Teknologi
 
 Pengembangan sistem Weather Dashboard menggunakan teknologi standar web modern sebagai berikut:
 
@@ -38,7 +38,7 @@ Pengembangan sistem Weather Dashboard menggunakan teknologi standar web modern s
 
       /weather → data cuaca saat ini
 
-3. Alur Kerja Aplikasi
+🔁 Alur Kerja
 
 1. Pengguna memasukkan nama kota melalui kolom pencarian.
 
@@ -52,5 +52,7 @@ Pengembangan sistem Weather Dashboard menggunakan teknologi standar web modern s
 
 
 Tugas Akhir Praktikum Pemrograman Web – Judul 6 (AJAX dan Web Service)
+
 Nama: Friskila R Simarmata
+
 NIM: 2315061043
